@@ -274,11 +274,9 @@ def main():
                            )
     backbone.summary()
     # x = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
-    embedding = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
-    projection_outputs = tf.keras.layers.Dense(256, activation='relu')(embedding)
-    projection_outputs = tf.keras.layers.Dense(64, dtype=tf.float32)(projection_outputs)
+    projection_outputs = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
     imagenet = tf.keras.layers.Dense(10, activation='softmax', name="imagenet",
-                                     dtype=tf.float32)(embedding)
+                                     dtype=tf.float32)(projection_outputs)
 
     model = tf.keras.Model(inputs=backbone.input,
                            outputs=[imagenet, projection_outputs]
