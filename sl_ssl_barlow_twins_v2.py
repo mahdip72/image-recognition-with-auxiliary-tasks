@@ -54,24 +54,26 @@ def rand_crop(image, fmin, fmax):
 
 def barlow_twins_augmenting(augmented_img):
     augmented_img = tf.image.random_flip_left_right(augmented_img)
-    rot_label = tf.random.uniform(shape=[1], minval=-25, maxval=25, dtype=tf.int32)
+    rot_label = tf.random.uniform(shape=[1], minval=-15, maxval=15, dtype=tf.int32)
     rad = tf.divide((tf.cast(rot_label, tf.float32)) * np.pi, 180)
     augmented_img = tfa.image.rotate(augmented_img, rad)
     augmented_img = tf.squeeze(augmented_img)
 
-    augmented_img = rand_crop(augmented_img, fmin=0.75, fmax=0.99)
-    augmented_img = tf.image.resize(augmented_img, [224, 224])
+    # augmented_img = rand_crop(augmented_img, fmin=0.75, fmax=0.99)
+    size = tf.random.uniform(shape=[], minval=170, maxval=300, dtype=tf.int32)
+    augmented_img = tf.image.random_crop(augmented_img, (size, size, 3))
+    augmented_img = tf.image.resize(augmented_img, [112, 112])
 
-    augmented_img = tf.image.random_hue(augmented_img, 0.07)
+    augmented_img = tf.image.random_hue(augmented_img, 0.05)
     augmented_img = tf.clip_by_value(augmented_img, 0.0, 1.0)
 
     # augmented_img = tf.image.random_contrast(augmented_img, lower=0.6, upper=1.4)
     # augmented_img = tf.image.random_brightness(augmented_img, max_delta=0.05)
     # augmented_img = tf.clip_by_value(augmented_img, 0.0, 1.0)
 
-    # kernel_size = tf.random.uniform(shape=[], minval=0, maxval=2, dtype=tf.int32)
-    # img = tfa.image.gaussian_filter2d(img, filter_shape=[kernel_size * 2 + 1, kernel_size * 2 + 1],
-    #                                   sigma=[1.5, 1.5])
+    kernel_size = tf.random.uniform(shape=[], minval=0, maxval=1, dtype=tf.int32)
+    augmented_img = tfa.image.gaussian_filter2d(augmented_img, filter_shape=[kernel_size * 2 + 1, kernel_size * 2 + 1],
+                                                sigma=[1.5, 1.5])
 
     # var = tf.random.uniform(shape=[], minval=0, maxval=0.04, dtype=tf.float32)
     # noise = tf.random.normal(shape=[224, 224, 3], mean=0.0,
@@ -92,17 +94,19 @@ def train_preprocessing(image_path, label):
     img = tf.io.decode_image(img, channels=3, dtype=tf.dtypes.float32, expand_animations=False)
     # img = tf.image.resize(img, [350, 350])
     img = tf.image.resize_with_pad(img, 350, 350)
+    # img = tf.image.resize_with_pad(img, 150, 150)
     # img = tf.image.resize(img, [150, 150])
 
-    # img = tf.image.random_crop(img, (size, size, 3))
-    # original_img = tf.image.central_crop(img, 0.75)
-    original_img = tf.image.central_crop(img, 0.8)
+    size = tf.random.uniform(shape=[], minval=200, maxval=300, dtype=tf.int32)
+    # original_img = tf.image.central_crop(img, 0.8)
+    original_img = tf.image.random_crop(img, (size, size, 3))
+
     # original_img = rand_crop(img, fmin=0.8, fmax=1.0)
-    original_img = tf.image.resize(original_img, [224, 224])
+    original_img = tf.image.resize(original_img, [112, 112])
 
     augmented_img = barlow_twins_augmenting(img)
     # augmented_img = rand_crop(img, fmin=0.7, fmax=1.0)
-    augmented_img = tf.image.resize(augmented_img, [224, 224])
+    augmented_img = tf.image.resize(augmented_img, [112, 112])
 
     all_labels = {
         'imagenet': tf.one_hot(label, depth=10),
@@ -115,7 +119,8 @@ def valid_preprocessing(image_path, label):
     img = tf.io.read_file(image_path)
     img = tf.io.decode_image(img, channels=3, dtype=tf.dtypes.float32, expand_animations=False)
     # img = tf.image.resize(img, [350, 350])
-    img = tf.image.resize_with_pad(img, 350, 350)
+    # img = tf.image.resize_with_pad(img, 350, 350)
+    img = tf.image.resize_with_pad(img, 150, 150)
     # img = tf.image.resize(img, [150, 150])
 
     # img = tf.image.random_crop(img, (size, size, 3))
@@ -123,7 +128,7 @@ def valid_preprocessing(image_path, label):
     # img = rand_crop(img, fmin=0.7, fmax=1.0)
     # img = tf.image.central_crop(img, 0.7)
 
-    original_img = tf.image.resize(original_img, [224, 224])
+    original_img = tf.image.resize(original_img, [112, 112])
     # img = tf.image.resize(img, [112, 112])
 
     all_labels = {
@@ -137,7 +142,7 @@ def valid_preprocessing(image_path, label):
 def off_diagonal(x):
     n = tf.shape(x)[0]
     flattened = tf.reshape(x, [-1])[:-1]
-    off_diagonals = tf.reshape(flattened, (n-1, n+1))[:, 1:]
+    off_diagonals = tf.reshape(flattened, (n - 1, n + 1))[:, 1:]
     return tf.reshape(off_diagonals, [-1])
 
 
@@ -200,7 +205,6 @@ class BarlowTwins(tf.keras.Model):
             imagenet_loss = imagenet_1_loss + imagenet_2_loss
 
             loss_barlowtwins = compute_loss(z_a, z_b, self.lambd)
-
             loss = loss_barlowtwins + imagenet_loss
 
         trainable_vars = self.trainable_variables
@@ -242,7 +246,7 @@ def main():
     autotune = tf.data.experimental.AUTOTUNE
     tf.keras.backend.clear_session()
     # mixed_precision.set_global_policy('mixed_float16')
-    batch = 32
+    batch = 128
 
     dataset_path = 'S:/Datasets/imagenette2'
 
@@ -266,27 +270,33 @@ def main():
 
     # for testing:
     # for i, j, l in train_ds:
-    # for i, j in valid_ds:
-    #     print(i.numpy().shape)
-    #     original_imgs = i.numpy()
-    #     augmented_imgs = j.numpy()
-    #     original_imgs = (original_imgs * 255).astype(np.uint8)
-    #     for inx, b in enumerate(range(original_imgs.shape[0])):
-    #         original_img = original_imgs[b, :, :, :]
-    #         augmented_img = augmented_imgs[b, :, :, :]
-    #         cv2.imshow('original', cv2.cvtColor(cv2.resize(original_img, (224, 224)), cv2.COLOR_RGB2BGR))
-    #         cv2.imshow('augmented', cv2.cvtColor(cv2.resize(augmented_img, (224, 224)), cv2.COLOR_RGB2BGR))
-    #         cv2.waitKey(0)
+        # for i, j in valid_ds:
+        # print(i.numpy().shape)
+        # original_imgs = i.numpy()
+        # augmented_imgs = j.numpy()
+        # original_imgs = (original_imgs * 255).astype(np.uint8)
+        # for inx, b in enumerate(range(original_imgs.shape[0])):
+        #     original_img = original_imgs[b, :, :, :]
+        #     augmented_img = augmented_imgs[b, :, :, :]
+        #     cv2.imshow('original', cv2.cvtColor(cv2.resize(original_img, (224, 224)), cv2.COLOR_RGB2BGR))
+        #     cv2.imshow('augmented', cv2.cvtColor(cv2.resize(augmented_img, (224, 224)), cv2.COLOR_RGB2BGR))
+        #     cv2.waitKey(0)
 
     tf.keras.backend.clear_session()
     backbone = MobileNetV2(include_top=False,
-                           input_shape=(224, 224, 3),
+                           input_shape=(112, 112, 3),
                            weights=None,
                            )
     backbone.summary()
-    projection_outputs = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
+    embedding = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
+    projection_outputs = tf.keras.layers.Dense(1024, activation='linear')(embedding)
+    projection_outputs = tf.keras.layers.BatchNormalization()(projection_outputs)
+    projection_outputs = tf.keras.activations.relu(projection_outputs)
+    projection_outputs = tf.keras.layers.Dense(512, activation='linear', dtype=tf.float32)(projection_outputs)
+    projection_outputs = tf.keras.layers.BatchNormalization()(projection_outputs)
+
     imagenet = tf.keras.layers.Dense(10, activation='softmax', name="imagenet",
-                                     dtype=tf.float32)(projection_outputs)
+                                     dtype=tf.float32)(embedding)
 
     model = tf.keras.Model(inputs=backbone.input,
                            outputs=[imagenet, projection_outputs]
@@ -305,7 +315,7 @@ def main():
     model.compile(
         optimizer=op,
     )
-    model.compute_output_shape(input_shape=(None, 224, 224, 3))
+    model.compute_output_shape(input_shape=(None, 112, 112, 3))
     # model.build(backbone.input)
 
     loss_checkpoint = ModelCheckpoint(f"./results/{model_name}/checkpoint",
@@ -339,7 +349,7 @@ def main():
         validation_data=valid_ds,
         callbacks=callbacks_list,
         verbose=1,
-        epochs=80)
+        epochs=200)
 
     print('finish')
 
