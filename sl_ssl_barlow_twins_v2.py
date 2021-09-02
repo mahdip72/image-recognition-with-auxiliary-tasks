@@ -11,6 +11,7 @@ from tensorflow.keras.applications.resnet50 import ResNet50
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from tensorflow.keras import mixed_precision
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger
+from tensorflow.keras import layers, models
 
 
 def create_pairs(path):
@@ -172,10 +173,39 @@ def compute_loss(z_a, z_b, lambd):
     return loss
 
 
-class BarlowTwins(tf.keras.Model):
-    def __init__(self, encoder, lambd=5e-3):
+class Encoder(layers.Layer):
+    def __init__(self):
+        super(Encoder, self).__init__()
+        self.backbone = MobileNetV2(include_top=False,
+                                    input_shape=(112, 112, 3),
+                                    weights=None,
+                                    )
+        self.embedding = tf.keras.layers.GlobalAveragePooling2D()
+        self.proj1 = tf.keras.Sequential([
+            layers.Dense(1024, activation='linear'),
+            layers.BatchNormalization(),
+            layers.ReLU()
+        ])
+        self.proj2 = tf.keras.Sequential([
+            layers.Dense(512, activation='linear'),
+            layers.BatchNormalization(),
+            layers.ReLU()
+        ])
+        self.classifier = layers.Dense(10, activation='softmax', name="imagenet", dtype=tf.float32)
+
+    def call(self, inputs, **kwargs):
+        x = self.backbone(inputs)
+        x = self.embedding(x)
+        x = self.proj1(x)
+        x = self.proj2(x)
+        output = self.classifier(x)
+        return output
+
+
+class BarlowTwins(models.Model):
+    def __init__(self, lambd=5e-3):
         super(BarlowTwins, self).__init__()
-        self.encoder = encoder
+        self.encoder = Encoder()
         self.lambd = lambd
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
         self.all_loss_tracker = tf.keras.metrics.Mean(name="all_loss")
@@ -190,7 +220,7 @@ class BarlowTwins(tf.keras.Model):
                 self.imagenet_acc_tracker
                 ]
 
-    def call(self, inputs):
+    def call(self, inputs, training=None, mask=None):
         return self.encoder(inputs)
 
     def train_step(self, data):
@@ -207,8 +237,14 @@ class BarlowTwins(tf.keras.Model):
             loss_barlowtwins = compute_loss(z_a, z_b, self.lambd)
             loss = loss_barlowtwins + imagenet_loss
 
-        trainable_vars = self.trainable_variables
-        grads = tape.gradient(loss, trainable_vars)
+        # barlow twins loss only applies to projection heads params
+        proj_trainable_vars = self.encoder.proj1.trainable_variables + self.encoder.proj2.trainable_variables
+        proj_grads = tape.gradient(loss_barlowtwins, proj_trainable_vars)
+        self.optimizer.apply_gradients(zip(proj_grads, proj_trainable_vars))
+
+        # total loss applies to the rest of the trainable params
+        trainable_vars = self.trainable_variables - proj_trainable_vars
+        grads = tape.gradient(imagenet_loss, trainable_vars)
         self.optimizer.apply_gradients(zip(grads, trainable_vars))
 
         # Monitor loss and acc
@@ -270,40 +306,20 @@ def main():
 
     # for testing:
     # for i, j, l in train_ds:
-        # for i, j in valid_ds:
-        # print(i.numpy().shape)
-        # original_imgs = i.numpy()
-        # augmented_imgs = j.numpy()
-        # original_imgs = (original_imgs * 255).astype(np.uint8)
-        # for inx, b in enumerate(range(original_imgs.shape[0])):
-        #     original_img = original_imgs[b, :, :, :]
-        #     augmented_img = augmented_imgs[b, :, :, :]
-        #     cv2.imshow('original', cv2.cvtColor(cv2.resize(original_img, (224, 224)), cv2.COLOR_RGB2BGR))
-        #     cv2.imshow('augmented', cv2.cvtColor(cv2.resize(augmented_img, (224, 224)), cv2.COLOR_RGB2BGR))
-        #     cv2.waitKey(0)
+    # for i, j in valid_ds:
+    # print(i.numpy().shape)
+    # original_imgs = i.numpy()
+    # augmented_imgs = j.numpy()
+    # original_imgs = (original_imgs * 255).astype(np.uint8)
+    # for inx, b in enumerate(range(original_imgs.shape[0])):
+    #     original_img = original_imgs[b, :, :, :]
+    #     augmented_img = augmented_imgs[b, :, :, :]
+    #     cv2.imshow('original', cv2.cvtColor(cv2.resize(original_img, (224, 224)), cv2.COLOR_RGB2BGR))
+    #     cv2.imshow('augmented', cv2.cvtColor(cv2.resize(augmented_img, (224, 224)), cv2.COLOR_RGB2BGR))
+    #     cv2.waitKey(0)
 
     tf.keras.backend.clear_session()
-    backbone = MobileNetV2(include_top=False,
-                           input_shape=(112, 112, 3),
-                           weights=None,
-                           )
-    backbone.summary()
-    embedding = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
-    projection_outputs = tf.keras.layers.Dense(1024, activation='linear')(embedding)
-    projection_outputs = tf.keras.layers.BatchNormalization()(projection_outputs)
-    projection_outputs = tf.keras.activations.relu(projection_outputs)
-    projection_outputs = tf.keras.layers.Dense(512, activation='linear', dtype=tf.float32)(projection_outputs)
-    projection_outputs = tf.keras.layers.BatchNormalization()(projection_outputs)
-
-    imagenet = tf.keras.layers.Dense(10, activation='softmax', name="imagenet",
-                                     dtype=tf.float32)(embedding)
-
-    model = tf.keras.Model(inputs=backbone.input,
-                           outputs=[imagenet, projection_outputs]
-                           )
-
-    model.summary()
-    model = BarlowTwins(model)
+    model = BarlowTwins()
     # op = tf.keras.optimizers.Adam(learning_rate=0.001)
 
     op = adabelief_tf.AdaBeliefOptimizer(learning_rate=0.001,
