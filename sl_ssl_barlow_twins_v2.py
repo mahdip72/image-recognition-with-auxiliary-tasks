@@ -1,9 +1,12 @@
+import os
+
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 import random
 import adabelief_tf
 import numpy as np
 import pandas as pd
-import os
 import cv2
 import tensorflow_addons as tfa
 from collections import Counter
@@ -181,12 +184,10 @@ class Encoder(layers.Layer):
                                     weights=None,
                                     )
         self.embedding = tf.keras.layers.GlobalAveragePooling2D()
-        self.proj1 = tf.keras.Sequential([
+        self.proj = tf.keras.Sequential([
             layers.Dense(1024, activation='linear'),
             layers.BatchNormalization(),
-            layers.ReLU()
-        ])
-        self.proj2 = tf.keras.Sequential([
+            layers.ReLU(),
             layers.Dense(512, activation='linear'),
             layers.BatchNormalization(),
             layers.ReLU()
@@ -196,10 +197,9 @@ class Encoder(layers.Layer):
     def call(self, inputs, **kwargs):
         x = self.backbone(inputs)
         x = self.embedding(x)
-        x = self.proj1(x)
-        x = self.proj2(x)
         output = self.classifier(x)
-        return output
+        proj_output = self.proj(x)
+        return output, proj_output
 
 
 class BarlowTwins(models.Model):
@@ -221,12 +221,13 @@ class BarlowTwins(models.Model):
                 ]
 
     def call(self, inputs, training=None, mask=None):
-        return self.encoder(inputs)
+        output = self.encoder(inputs)
+        return output
 
     def train_step(self, data):
         # Unpack the data.
         img1, img2, label = data
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent=True) as tape:
             imagenet_1, z_a = self(img1, training=True)
             imagenet_2, z_b = self(img2, training=True)
 
@@ -238,12 +239,12 @@ class BarlowTwins(models.Model):
             loss = loss_barlowtwins + imagenet_loss
 
         # barlow twins loss only applies to projection heads params
-        proj_trainable_vars = self.encoder.proj1.trainable_variables + self.encoder.proj2.trainable_variables
+        proj_trainable_vars = self.encoder.proj.trainable_variables
         proj_grads = tape.gradient(loss_barlowtwins, proj_trainable_vars)
         self.optimizer.apply_gradients(zip(proj_grads, proj_trainable_vars))
 
         # total loss applies to the rest of the trainable params
-        trainable_vars = self.trainable_variables - proj_trainable_vars
+        trainable_vars = self.encoder.embedding.trainable_variables + self.encoder.backbone.trainable_variables + self.encoder.classifier.trainable_variables
         grads = tape.gradient(imagenet_loss, trainable_vars)
         self.optimizer.apply_gradients(zip(grads, trainable_vars))
 
@@ -282,9 +283,9 @@ def main():
     autotune = tf.data.experimental.AUTOTUNE
     tf.keras.backend.clear_session()
     # mixed_precision.set_global_policy('mixed_float16')
-    batch = 128
+    batch = 8
 
-    dataset_path = 'S:/Datasets/imagenette2'
+    dataset_path = './imagenette2'
 
     # model_name = 'sl-no_augment'
     # model_name = 'sl-weak_augment'
@@ -330,6 +331,7 @@ def main():
 
     model.compile(
         optimizer=op,
+        run_eagerly=True
     )
     model.compute_output_shape(input_shape=(None, 112, 112, 3))
     # model.build(backbone.input)

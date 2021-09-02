@@ -230,7 +230,7 @@ def main():
     mixed_precision.set_global_policy('mixed_float16')
     batch = 32
 
-    dataset_path = 'S:/Datasets/imagenette2'
+    dataset_path = './imagenette2'
 
     # model_name = 'sl-no_augment'
     # model_name = 'sl-weak_augment'
